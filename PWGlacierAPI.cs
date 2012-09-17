@@ -27,7 +27,7 @@ namespace Glacierizer
             }
         }
 
-        public GlacierFilePart(byte[] data, string checksum, long start, long end, string uploadId)
+        public GlacierFilePart(ref byte[] data, string checksum, long start, long end, string uploadId)
         {
             Data = data;
             Checksum = checksum;
@@ -42,7 +42,7 @@ namespace Glacierizer
         private AmazonGlacierClient _amazonGlacierClient;
         private string _vault;
         private string _archive;
-
+        
         public PWGlacierAPI(string vaultName, string archiveName)
         {
             _amazonGlacierClient = new AmazonGlacierClient(Amazon.RegionEndpoint.USEast1);
@@ -64,24 +64,20 @@ namespace Glacierizer
             return response.InitiateMultipartUploadResult.UploadId;
         }
 
-        public bool UploadPart(GlacierFilePart part)
+        public bool UploadPart(GlacierFilePart part, System.EventHandler<Amazon.Runtime.StreamTransferProgressArgs> progressCallback)
         {
             UploadMultipartPartRequest uploadRequest = new UploadMultipartPartRequest()
             {
                 Body = new MemoryStream(part.Data),
                 Checksum = part.Checksum,
                 Range = part.Range,
-                StreamTransferProgress = OnTransferProgress,
+                StreamTransferProgress = progressCallback,
                 UploadId = part.UploadId,
                 VaultName = _vault
             };
-
-            Console.WriteLine("PWGlacierAPI: Uploading bytes " + part.Range);
-
+            
             UploadMultipartPartResponse response = _amazonGlacierClient.UploadMultipartPart(uploadRequest);
-
-            Console.WriteLine("PWGlacierAPI: Done uploading part.");
-
+            
             if (part.Checksum == response.UploadMultipartPartResult.Checksum)
                 return true;
             else
@@ -90,7 +86,7 @@ namespace Glacierizer
 
         public string EndMultiPartUpload(long archiveSize, string checksum, string uploadId)
         {
-            CompleteMultipartUploadRequest request = new CompleteMultipartUploadRequest()
+            CompleteMultipartUploadRequest request = new CompleteMultipartUploadRequest()   
             {
                 ArchiveSize = archiveSize.ToString(),
                 Checksum = checksum,
@@ -98,26 +94,104 @@ namespace Glacierizer
                 VaultName = _vault
             };
 
-            try
-            {
-                CompleteMultipartUploadResponse response = _amazonGlacierClient.CompleteMultipartUpload(request);
-                return response.CompleteMultipartUploadResult.ArchiveId;
-            }
-            catch (InvalidParameterValueException ex)
-            {
-                return "";
-            }
+            CompleteMultipartUploadResponse response = _amazonGlacierClient.CompleteMultipartUpload(request);
+            return response.CompleteMultipartUploadResult.ArchiveId;
         }
 
-        private void OnTransferProgress(Object sender, EventArgs e)
+        public string InitiateDownloadRequest(string archiveId, string snsTopic = "")
         {
-            string percentageCompleted = e.ToString();
-            
-            System.Text.RegularExpressions.Match match = System.Text.RegularExpressions.Regex.Match(percentageCompleted, "Percentage completed: ([0-9]+)");
-            percentageCompleted = match.Groups[1].Value;
-            
-            if(int.Parse(percentageCompleted) % 20 == 0)
-                Console.WriteLine("GlacierUploader: Part complete percentage " + percentageCompleted + "%");
+            InitiateJobRequest initDownloadRequest = new InitiateJobRequest()
+            {
+                VaultName = _vault,
+                JobParameters = new JobParameters()
+                {
+                    Type = "archive-retrieval",
+                    ArchiveId = archiveId
+                }
+            };
+
+            InitiateJobResponse response = _amazonGlacierClient.InitiateJob(initDownloadRequest);
+            return response.InitiateJobResult.JobId;
+        }
+
+        public bool JobCompleted(string jobId)
+        {
+            DescribeJobRequest describeJobRequest = new DescribeJobRequest()
+            {
+                AccountId = "-",
+                JobId = jobId,
+                VaultName = _vault
+            };
+
+            DescribeJobResponse response = _amazonGlacierClient.DescribeJob(describeJobRequest);
+            return response.DescribeJobResult.Completed;
+        }
+
+        public GlacierArchiveInfo ArchiveInfo(string jobId)
+        {
+            DescribeJobRequest describeJobRequest = new DescribeJobRequest()
+            {
+                AccountId = "-",
+                JobId = jobId,
+                VaultName = _vault
+            };
+
+            DescribeJobResponse response = _amazonGlacierClient.DescribeJob(describeJobRequest);
+            return new GlacierArchiveInfo(response.DescribeJobResult);
+        }
+
+        public ArchivePartInfo DownloadArchivePart(string jobId, long start, long end)
+        {
+            GetJobOutputRequest downloadRequest = new GetJobOutputRequest()
+            {
+                JobId = jobId,
+                VaultName = _vault
+            };
+
+            downloadRequest.SetRange(start, end);
+
+            GetJobOutputResponse response = _amazonGlacierClient.GetJobOutput(downloadRequest);
+            GetJobOutputResult result = response.GetJobOutputResult;
+
+            ArchivePartInfo info = new ArchivePartInfo(result.Body, result.Checksum);
+
+            return info;
+        }
+
+        public string InitiateVaultInventoryRequest()
+        {
+            InitiateJobRequest inventoryRequest = new InitiateJobRequest()
+            {
+                VaultName = _vault,
+                JobParameters = new JobParameters()
+                {
+                    Type = "inventory-retrieval"
+                }
+            };
+
+            InitiateJobResponse response = _amazonGlacierClient.InitiateJob(inventoryRequest);
+            return response.InitiateJobResult.JobId;
+        }
+
+        public byte[] GetVaultInventory(string jobId)
+        {
+            GetJobOutputRequest inventoryRequest = new GetJobOutputRequest()
+            {
+                JobId = jobId,
+                VaultName = _vault
+            };
+
+            GetJobOutputResponse response = _amazonGlacierClient.GetJobOutput(inventoryRequest);
+            using (Stream webStream = response.GetJobOutputResult.Body)
+            {
+                List<byte> data = new List<byte>();
+                int newByte;
+
+                while ((newByte = webStream.ReadByte()) != -1)
+                    data.Add((byte)newByte);
+
+                return data.ToArray();
+            }
         }
     }
 }

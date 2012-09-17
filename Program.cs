@@ -28,27 +28,32 @@ namespace Glacierizer
         public string filename = "";
 
         // Set the default packet size to 1MB.
-        private static long DEFAULT_PACKET_SIZE = 1024 * 1024 * 1;
+        private static int DEFAULT_PACKET_SIZE = 1024 * 1024 * 1;
 
         [OptDef(OptValType.ValueOpt)]
         [ShortOptionName('s')]
         [UseNameAsLongOption(true)]
-        public long size = DEFAULT_PACKET_SIZE;
+        public int size = DEFAULT_PACKET_SIZE;
 
         [OptDef(OptValType.ValueOpt)]
         [ShortOptionName('t')]
         [UseNameAsLongOption(true)]
         public short threads = 1;
 
-        [OptDef(OptValType.ValueReq)]
+        [OptDef(OptValType.ValueOpt)]
         [ShortOptionName('v')]
         [UseNameAsLongOption(true)]
         public string vault = "";
 
-        [OptDef(OptValType.ValueReq)]
-        [ShortOptionName('n')]
+        [OptDef(OptValType.ValueOpt)]
+        [ShortOptionName('a')]
         [UseNameAsLongOption(true)]
-        public string name = "";
+        public string archive = "";
+
+        [OptDef(OptValType.ValueOpt)]
+        [ShortOptionName('j')]
+        [UseNameAsLongOption(true)]
+        public string jobId = "";
     }
 
     class Program
@@ -83,23 +88,53 @@ namespace Glacierizer
 
             switch (props.operation)
             {
+                case "interactive":
+                    {
+                        Console.Write("What would you like to do (upload, download, list)? ");
+                        string operation = Console.ReadLine();
+
+                        Console.Write("Please enter Vault name: ");
+                        props.vault = Console.ReadLine();
+
+                        switch (operation)
+                        {
+                            case "upload":
+                            case "download":
+                                {
+                                    Console.Write("Enter an existing retrieval job ID (leave empty if new request): ");
+                                    props.jobId = Console.ReadLine();
+
+                                    Console.Write("Enter the archive ID: ");
+                                    props.archive = Console.ReadLine();
+
+                                    GlacierizerDownloader downloader = new GlacierizerDownloader(props);
+
+                                    if (downloader.Download())
+                                    {
+                                        Console.WriteLine("Downloaded: " + Utilities.BytesToHuman(downloader.TotalBytesDownloaded));
+                                        Console.WriteLine("Success!");
+                                    }
+                                    
+                                    break;
+                                }
+                            case "list":
+                            default:
+                                break;
+                        }
+
+                        break;
+                    }
                 case "upload":
                     {
                         GlacierizerUploader uploader = new GlacierizerUploader(props);
 
                         if (uploader.Upload())
                         {
-                            if(uploader.TotalBytesUploaded > (1024 * 1024 * 1024))
-                                Console.WriteLine("Uploaded: " + uploader.TotalBytesUploaded / (1024 * 1024 * 1024) + "GB");
-                            else if(uploader.TotalBytesUploaded > (1024 * 1024))
-                                Console.WriteLine("Uploaded: " + uploader.TotalBytesUploaded / (1024 * 1024) + "MB");
-                            else if (uploader.TotalBytesUploaded > (1024))
-                                Console.WriteLine("Uploaded: " + uploader.TotalBytesUploaded / (1024) + "kB");
-                            else
-                                Console.WriteLine("Uploaded: " + uploader.TotalBytesUploaded + "bytes");
+                            Console.WriteLine("Uploaded: " + Utilities.BytesToHuman(uploader.TotalBytesUploaded));
+                            Console.WriteLine("Success!");
                             Console.WriteLine("ArchiveId: " + uploader.ArchiveId);
 
-                            string path = "./" + props.vault + "_" + props.name + " _uploaded.archive.id";
+                            string path = "./" + props.vault + "_" + props.archive + " _uploaded.archive.id";
                             System.IO.File.WriteAllText(path, uploader.ArchiveId);
                         }
 
@@ -107,10 +142,21 @@ namespace Glacierizer
                     }
                 case "download":
                     {
+                        GlacierizerDownloader downloader = new GlacierizerDownloader(props);
+
+                        if (downloader.Download())
+                        {
+                            Console.WriteLine("Downloaded: " + Utilities.BytesToHuman(downloader.TotalBytesDownloaded));
+                            Console.WriteLine("Success!");
+                        }
                         break;
                     }
                 case "list":
                     {
+                        GlacierizerVaults vaults = new GlacierizerVaults(props);
+                        if (vaults.GetVaultInventory())
+                        {
+                        }
                         break;
                     }
                 default:

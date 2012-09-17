@@ -44,10 +44,14 @@
     <DocumentationFile>
     </DocumentationFile>
     <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
+    <NoWarn>
+    </NoWarn>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PlatformTarget>AnyCPU</PlatformTarget>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
+    <Optimize>false</Optimize>
     <OutputPath>bin\Release\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
@@ -55,6 +59,8 @@
     <DocumentationFile>
     </DocumentationFile>
     <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PlatformTarget>x64</PlatformTarget>
   </PropertyGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it.
@@ -88,10 +94,20 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ArchivePartInfo.cs" />
+    <Compile Include="BufferBucket.cs" />
+    <Compile Include="DownloadWorker.cs" />
+    <Compile Include="FastArrayCopy.cs" />
+    <Compile Include="GlacierArchiveInfo.cs" />
+    <Compile Include="GlacierizerDownloader.cs" />
     <Compile Include="GlacierizerUploader.cs" />
+    <Compile Include="GlacierizerVaults.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="assemblyinfo.cs" />
     <Compile Include="PWGlacierAPI.cs" />
+    <Compile Include="TransferMetrics.cs" />
+    <Compile Include="UploaderWorker.cs" />
+    <Compile Include="Utilities.cs" />
   </ItemGroup>
   <ItemGroup>
     <BootstrapperPackage Include="Microsoft.Net.Client.3.5">

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -15,16 +16,23 @@ namespace Glacierizer
     class GlacierizerUploader
     {
         private PWGlacierAPI _glacierAPI = null;
-        private Stream _inputStream = null;
-        private long _partSize;
-        private short _threads;
+        private Stream inputStream = null;
+        private List<ThreadInfo> threads = null;
 
-        private HashAlgorithm _hasher;
+        private int partSize;
+        private short numRequestedThreads;
+        private int bufferFill;
+        private long totalBytesProcessed;
 
-        private long _totalBytesUploaded;
+        public long TotalBytesProcessed
+        {
+            get { return totalBytesProcessed; }
+        }
+
+        private TransferMetric transferMetric;
         public long TotalBytesUploaded
         {
-            get { return _totalBytesUploaded; }
+            get { return transferMetric.bytesTransferred(); }
         }
 
         private string _archiveId;
@@ -35,133 +43,120 @@ namespace Glacierizer
 
         public GlacierizerUploader(Properties props)
         {
-            _glacierAPI = new PWGlacierAPI(props.vault, props.name);
-            _hasher = SHA256.Create();
+            _glacierAPI = new PWGlacierAPI(props.vault, props.archive);
 
             if (props.filename.Length > 0)
             {
-                _inputStream = File.Open(props.filename, FileMode.Open);
+                inputStream = File.Open(props.filename, FileMode.Open);
             }
             else
-                _inputStream = Console.OpenStandardInput();
+                inputStream = Console.OpenStandardInput();
 
-            _partSize = props.size;
-            _threads = props.threads;
+            partSize = props.size;
+            numRequestedThreads = props.threads;
+
+            threads = new List<ThreadInfo>();
+            for (int i = 0; i < numRequestedThreads; ++i)
+            {
+                ThreadInfo info = new ThreadInfo(partSize);
+                threads.Add(info);
+            }
+
+            transferMetric = new TransferMetric();
         }
-        
+
         public bool Upload()
         {
-            string uploadId = _glacierAPI.InitiateMultiPartUpload(_partSize);
+            string uploadId = _glacierAPI.InitiateMultiPartUpload(partSize);
+            Console.WriteLine("Upload started.");
+            Console.WriteLine("Upload ID: " + uploadId);
 
-            Queue<byte[]> hashQueue = new Queue<byte[]>();
-            _totalBytesUploaded = 0;
+            List<string> hashList = new List<string>();
+            totalBytesProcessed = 0;
 
-            Queue<byte> currentQueue = new Queue<byte>();
-            byte[] shortBuffer = new byte[1024];
+            bufferFill = 0;
+            int pipeReadableLength = 64 * (int)Math.Pow(2, 10);
 
-            int bytes;
+            byte[] buffer = new byte[partSize];
+
+            int bytesRead = 1;
             long currentStart = 0;
             long currentEnd = 0;
 
-            while (true)
+            Timer timer = new Timer(DisplayMetrics, null, 1000, 5000);
+            
+            while (bytesRead > 0)
             {
-                bytes = _inputStream.Read(shortBuffer, 0, shortBuffer.Length);
+                bytesRead = inputStream.Read(buffer, bufferFill, pipeReadableLength);
+                bufferFill += bytesRead;
 
-                if (bytes == 0)
+                // Is the buffer full? If so, we're ready to ship this package, OR
+                // did we read 0 bytes and still have something left in the buffer?
+                // Ship it.
+                if (bytesRead == 0 && bufferFill != 0
+                 || bufferFill == partSize)
                 {
-                    if (currentQueue.Count != 0)
-                    {
-                        long size = currentQueue.Count;
-                        currentEnd = currentStart + currentQueue.Count - 1;
+                    currentEnd = currentStart + bufferFill - 1;
 
-                        UploadPart(ref currentQueue, ref hashQueue, size, currentStart, currentEnd, uploadId);
+                    int availableThreadIndex = WaitForThreadsInPool(ref threads);
 
-                        _totalBytesUploaded += size;
-                    }
+                    threads[availableThreadIndex].CopyData(ref buffer, bufferFill);
+                    threads[availableThreadIndex].SetWorker(new UploaderWorker(ref _glacierAPI, ref transferMetric, ref threads[availableThreadIndex].data, ref hashList, currentStart, currentEnd, uploadId));
+                    threads[availableThreadIndex].Start();
 
-                    Console.WriteLine("StdInReader: Data stream finished...");
-                    break;
-                }
-
-                for (int i = 0; i < bytes; ++i)
-                    currentQueue.Enqueue(shortBuffer[i]);
-
-                if (currentQueue.Count >= _partSize)
-                {
-                    currentEnd = currentStart + _partSize - 1;
-
-                    UploadPart(ref currentQueue, ref hashQueue, _partSize, currentStart, currentEnd, uploadId);
-
-                    _totalBytesUploaded += _partSize;
+                    totalBytesProcessed += bufferFill;
+                    bufferFill = 0;
+                 
                     currentStart = currentEnd + 1;
                 }
             }
 
-            // Compute the full tree SHA256 checksum
-            string fullChecksum = "";
-
-            Queue<byte[]> treeHash = processLevel(hashQueue);
-
-            // If the hash queue count is not 1, something went wrong. Throw?
-            if (treeHash.Count != 1)
-                throw new Exception();
-
-            byte[] hash = treeHash.Dequeue();
-            foreach (char c in hash)
+            while (threads.Count != 0)
             {
-                int tmp = c;
-                fullChecksum += String.Format("{0:x2}", (uint)System.Convert.ToUInt32(tmp.ToString()));
+                for (int i = 0; i < threads.Count; ++i)
+                {
+                    if (!threads[i].IsAlive())
+                        threads.RemoveAt(i);
+                }
+                Thread.Sleep(1000);
             }
 
-            _archiveId = _glacierAPI.EndMultiPartUpload(_totalBytesUploaded, fullChecksum, uploadId);
+            string fullChecksum = Amazon.Glacier.TreeHashGenerator.CalculateTreeHash(hashList);
+
+            _archiveId = _glacierAPI.EndMultiPartUpload(totalBytesProcessed, fullChecksum, uploadId);
             if (_archiveId.Length == 0)
                 return false;
             else
                 return true;
         }
 
-        private Queue<byte[]> processLevel(Queue<byte[]> hashQueue)
+        private int WaitForThreadsInPool(ref List<ThreadInfo> threads)
         {
-            if (hashQueue.Count == 1)
-                return hashQueue;
-
-            Queue<byte[]> newLevelQueue = new Queue<byte[]>();
-
-            while (hashQueue.Count >= 2)
+            while (true)
             {
-                byte[] first = hashQueue.Dequeue();
-                byte[] second = hashQueue.Dequeue();
-
-                byte[] hashBytes = _hasher.ComputeHash(first.Concat(second).ToArray());
-
-                newLevelQueue.Enqueue(hashBytes);
-
-                if (hashQueue.Count == 1)
-                    newLevelQueue.Enqueue(hashQueue.Dequeue());
+                for (int i = 0; i < threads.Count; ++i)
+                {
+                    if (!threads[i].IsAlive())
+                        return i;
+                }
+                long speed = transferMetric.speed();
+                long partDuration = 1000 * (partSize / speed);
+                long sleep = Math.Max(Math.Min(partDuration / threads.Count, 60000), 500);
+                Console.WriteLine("Main Thread Waiting for Uploader Threads to finish. Sleeping for " + sleep + "ms");
+                Thread.Sleep((int)sleep);
             }
-
-            return processLevel(newLevelQueue);
         }
 
-        private void UploadPart(ref Queue<byte> currentQueue, ref Queue<byte[]> hashQueue, long size, long start, long end, string uploadId)
+        private void DisplayMetrics(object state)
         {
-            byte[] uploadablePart = new byte[size];
-
-            for (int i = 0; i < size; ++i)
-                uploadablePart[i] = currentQueue.Dequeue();
-
-            HashAlgorithm hasher = SHA256.Create();
-            byte[] hashBytes = hasher.ComputeHash(uploadablePart);
-            hashQueue.Enqueue(hashBytes);
-            string checksum = "";
-            foreach (char c in hashBytes)
-            {
-                int tmp = c;
-                checksum += String.Format("{0:x2}", (uint)System.Convert.ToUInt32(tmp.ToString()));
-            }
-
-            GlacierFilePart part = new GlacierFilePart(uploadablePart, checksum, start, end, uploadId);
-            _glacierAPI.UploadPart(part);
+            Process proc = Process.GetCurrentProcess();
+            Console.WriteLine("Read: " + Utilities.BytesToHuman(bufferFill) +
+                              ", Processed: " + Utilities.BytesToHuman(totalBytesProcessed) +
+                              ", Uploaded: " + Utilities.BytesToHuman(transferMetric.bytesTransferred()) +
+                              ", Parts: " + transferMetric.partsTransferred() +
+                              ", Speed: " + Utilities.BytesToHuman(transferMetric.speed()) + "/s" +
+                              ", Threads: " + threads.Count +
+                              ", RAM: " + Utilities.BytesToHuman(proc.PrivateMemorySize64));
         }
     }
 }
