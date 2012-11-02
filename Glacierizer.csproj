@@ -77,7 +77,7 @@
       <Private>True</Private>
     </Reference>
     <Reference Include="CSharpOptParse">
-      <HintPath>..\..\..\Libs\CSharpOptParse.dll</HintPath>
+      <HintPath>Libs\CSharpOptParse.dll</HintPath>
     </Reference>
     <Reference Include="nunit.framework">
       <HintPath>..\..\..\Libs\nunit\nunit.framework.dll</HintPath>
