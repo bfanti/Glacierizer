@@ -86,62 +86,106 @@ namespace Glacierizer
                 return;
             }
 
-            switch (props.operation)
+            try
             {
-                case "interactive":
-                    {
-                        Console.Write("What would you like to do (upload, download, list)? ");
-                        string operation = Console.ReadLine();
-
-                        Console.Write("Please enter Vault name: ");
-                        props.vault = Console.ReadLine();
-
-                        switch (operation)
+                switch (props.operation)
+                {
+                    case "interactive":
                         {
-                            case "upload":
-                            case "download":
-                                {
-                                    Console.Write("Enter an existing retrieval job ID (leave empty if new request): ");
-                                    props.jobId = Console.ReadLine();
-
-                                    Console.Write("Enter the archive ID: ");
-                                    props.archive = Console.ReadLine();
-
-                                    GlacierizerDownloader downloader = new GlacierizerDownloader(props);
-
-                                    if (downloader.Download())
-                                    {
-                                        Console.WriteLine("Downloaded: " + Utilities.BytesToHuman(downloader.TotalBytesDownloaded));
-                                        Console.WriteLine("Success!");
-                                    }
-                                    
-                                    break;
-                                }
-                            case "list":
-                            default:
-                                break;
+                            ProcessInteractiveCommands(props);
+                            break;
                         }
+                    case "upload":
+                        {
+                            ProcessUpload(props);
+                            break;
+                        }
+                    case "download":
+                        {
+                            ProcessDownload(props);
+                            break;
+                        }
+                    case "list":
+                        {
+                            ProcessList(props);
+                            break;
+                        }
+                    default:
+                        return;
+                }
+            }
+            catch (Exception e)
+            {
+                System.IO.File.WriteAllText("./GlacierizerStackTrace.log", e.StackTrace);
+                throw e;
+            }
+        }
 
-                        break;
-                    }
+        private static void ProcessList(Properties props)
+        {
+            GlacierizerVaults vaults = new GlacierizerVaults(props);
+            if (vaults.GetVaultInventory())
+            {
+            }
+        }
+
+        private static void ProcessDownload(Properties props)
+        {
+            GlacierizerDownloader downloader = new GlacierizerDownloader(props);
+
+            if (downloader.Download())
+            {
+                Console.WriteLine("Downloaded: " + Utilities.BytesToHuman(downloader.TotalBytesDownloaded));
+                Console.WriteLine("Success!");
+            }
+        }
+
+        private static void ProcessUpload(Properties props)
+        {
+            Stream input;
+            if (props.filename.Length > 0)
+            {
+                input = File.Open(props.filename, FileMode.Open);
+            }
+            else
+                input = Console.OpenStandardInput();
+
+            GlacierAPIInterface api = new PWGlacierAPI(props.vault, props.archive);
+            GlacierizerUploader uploader = new GlacierizerUploader(api, input, props.size, props.threads);
+
+            if (uploader.Upload())
+            {
+                Console.WriteLine("Uploaded: " + Utilities.BytesToHuman(uploader.TotalBytesUploaded));
+                Console.WriteLine("Success!");
+                Console.WriteLine("ArchiveId: " + uploader.ArchiveId);
+
+                string archiveIdPath = "./" + props.vault + "_" + props.archive + "_uploaded.archive.id";
+                System.IO.File.WriteAllText(archiveIdPath, uploader.ArchiveId);
+
+                string hashPath = "./" + props.vault + "_" + props.archive + "_uploaded.hashlist";
+                System.IO.File.WriteAllText(hashPath, uploader.GetHashList());
+            }
+        }
+
+        private static void ProcessInteractiveCommands(Properties props)
+        {
+            Console.Write("What would you like to do (upload, download, list, resume)? ");
+            string operation = Console.ReadLine();
+
+            Console.Write("Please enter Vault name: ");
+            props.vault = Console.ReadLine();
+
+            switch (operation)
+            {
                 case "upload":
-                    {
-                        GlacierizerUploader uploader = new GlacierizerUploader(props);
-
-                        if (uploader.Upload())
-                        {
-                            Console.WriteLine("Uploaded: " + Utilities.BytesToHuman(uploader.TotalBytesUploaded));
-                            Console.WriteLine("Success!");
-                            Console.WriteLine("ArchiveId: " + uploader.ArchiveId);
-
-                            string path = "./" + props.vault + "_" + props.archive + " _uploaded.archive.id";
-                            System.IO.File.WriteAllText(path, uploader.ArchiveId);
-                        }
-
-                        break;
-                    }
                 case "download":
                     {
+                        Console.Write("Enter an existing retrieval job ID (leave empty if new request): ");
+                        props.jobId = Console.ReadLine();
+
+                        Console.Write("Enter the archive ID: ");
+                        props.archive = Console.ReadLine();
+
                         GlacierizerDownloader downloader = new GlacierizerDownloader(props);
 
                         if (downloader.Download())
@@ -149,20 +193,18 @@ namespace Glacierizer
                             Console.WriteLine("Downloaded: " + Utilities.BytesToHuman(downloader.TotalBytesDownloaded));
                             Console.WriteLine("Success!");
                         }
+
+                        break;
+                    }
+                case "resume":
+                    {
+
                         break;
                     }
                 case "list":
-                    {
-                        GlacierizerVaults vaults = new GlacierizerVaults(props);
-                        if (vaults.GetVaultInventory())
-                        {
-                        }
-                        break;
-                    }
                 default:
-                    return;
+                    break;
             }
-
         }
 
 

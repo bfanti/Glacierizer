@@ -72,7 +72,10 @@ namespace Glacierizer
             lock (bytesMutex)
             {
                 long elapsedInSeconds = stopWatch.ElapsedMilliseconds / 1000;
-                return totalBytesTransferred / elapsedInSeconds;
+                if (elapsedInSeconds != 0)
+                    return totalBytesTransferred / elapsedInSeconds;
+                else
+                    return 0;
             }
         }
     }

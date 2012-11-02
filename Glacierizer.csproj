@@ -98,6 +98,7 @@
     <Compile Include="BufferBucket.cs" />
     <Compile Include="DownloadWorker.cs" />
     <Compile Include="FastArrayCopy.cs" />
+    <Compile Include="GlacierAPIInterface.cs" />
     <Compile Include="GlacierArchiveInfo.cs" />
     <Compile Include="GlacierizerDownloader.cs" />
     <Compile Include="GlacierizerUploader.cs" />
@@ -105,7 +106,12 @@
     <Compile Include="Program.cs" />
     <Compile Include="assemblyinfo.cs" />
     <Compile Include="PWGlacierAPI.cs" />
+    <Compile Include="ThreadInfo.cs" />
     <Compile Include="TransferMetrics.cs" />
+    <Compile Include="UnitTests\GlacierizerUploaderTest.cs" />
+    <Compile Include="UnitTests\Mocks\TestGlacierAPI.cs" />
+    <Compile Include="UnitTests\TransferMetricTest.cs" />
+    <Compile Include="UnitTests\UploaderWorkerTest.cs" />
     <Compile Include="UploaderWorker.cs" />
     <Compile Include="Utilities.cs" />
   </ItemGroup>
@@ -140,5 +146,8 @@
     <None Include="App.config">
       <SubType>Designer</SubType>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="UnitTests\Data\" />
   </ItemGroup>
 </Project>

@@ -37,7 +37,7 @@ namespace Glacierizer
         }
     }
 
-    class PWGlacierAPI
+    class PWGlacierAPI : GlacierAPIInterface
     {
         private AmazonGlacierClient _amazonGlacierClient;
         private string _vault;
@@ -50,7 +50,7 @@ namespace Glacierizer
             _archive = archiveName;
         }
 
-        public string InitiateMultiPartUpload(long packetSize)
+        public string InitiateMultiPartUpload(int packetSize)
         {
             InitiateMultipartUploadRequest initiateRequest = new InitiateMultipartUploadRequest()
             {

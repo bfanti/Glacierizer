@@ -15,9 +15,19 @@ namespace Glacierizer
 {
     class GlacierizerUploader
     {
-        private PWGlacierAPI _glacierAPI = null;
+        private GlacierAPIInterface glacierAPI = null;
         private Stream inputStream = null;
         private List<ThreadInfo> threads = null;
+        private List<string> hashList = null;
+        public string GetHashList()
+        {
+            string output = "";
+            foreach (string item in hashList)
+            {
+                output += item + "\n";
+            }
+            return output;
+        }
 
         private int partSize;
         private short numRequestedThreads;
@@ -41,19 +51,12 @@ namespace Glacierizer
             get { return _archiveId; }
         }
 
-        public GlacierizerUploader(Properties props)
+        public GlacierizerUploader(GlacierAPIInterface api, Stream input, int partSize, short numThreads)
         {
-            _glacierAPI = new PWGlacierAPI(props.vault, props.archive);
-
-            if (props.filename.Length > 0)
-            {
-                inputStream = File.Open(props.filename, FileMode.Open);
-            }
-            else
-                inputStream = Console.OpenStandardInput();
-
-            partSize = props.size;
-            numRequestedThreads = props.threads;
+            glacierAPI = api;
+            inputStream = input;
+            this.partSize = partSize;
+            numRequestedThreads = numThreads;
 
             threads = new List<ThreadInfo>();
             for (int i = 0; i < numRequestedThreads; ++i)
@@ -62,20 +65,21 @@ namespace Glacierizer
                 threads.Add(info);
             }
 
+            hashList = new List<string>();
+
             transferMetric = new TransferMetric();
         }
 
         public bool Upload()
         {
-            string uploadId = _glacierAPI.InitiateMultiPartUpload(partSize);
+            string uploadId = glacierAPI.InitiateMultiPartUpload(partSize);
             Console.WriteLine("Upload started.");
             Console.WriteLine("Upload ID: " + uploadId);
 
-            List<string> hashList = new List<string>();
             totalBytesProcessed = 0;
 
             bufferFill = 0;
-            int pipeReadableLength = 64 * (int)Math.Pow(2, 10);
+            int pipeReadableLength = (int)Math.Pow(2, 10);
 
             byte[] buffer = new byte[partSize];
 
@@ -83,26 +87,22 @@ namespace Glacierizer
             long currentStart = 0;
             long currentEnd = 0;
 
-            Timer timer = new Timer(DisplayMetrics, null, 1000, 5000);
+            Timer timer = new Timer(DisplayMetrics, null, 5000, 5000);
             
             while (bytesRead > 0)
             {
                 bytesRead = inputStream.Read(buffer, bufferFill, pipeReadableLength);
                 bufferFill += bytesRead;
 
-                // Is the buffer full? If so, we're ready to ship this package, OR
-                // did we read 0 bytes and still have something left in the buffer?
-                // Ship it.
+                // Decide whether we are ready to upload this part:
+                // 1. If we read ZERO bytes, but the bufferFill isn't zero, it means the stream ended and we have to upload the last few bytes.
+                // 2. If our total current bufferFill is equal to partSize it means we have a full part ready to upload.
                 if (bytesRead == 0 && bufferFill != 0
                  || bufferFill == partSize)
                 {
                     currentEnd = currentStart + bufferFill - 1;
 
-                    int availableThreadIndex = WaitForThreadsInPool(ref threads);
-
-                    threads[availableThreadIndex].CopyData(ref buffer, bufferFill);
-                    threads[availableThreadIndex].SetWorker(new UploaderWorker(ref _glacierAPI, ref transferMetric, ref threads[availableThreadIndex].data, ref hashList, currentStart, currentEnd, uploadId));
-                    threads[availableThreadIndex].Start();
+                    PrepareAndStartThreadForUpload(uploadId, ref buffer, currentStart, currentEnd);
 
                     totalBytesProcessed += bufferFill;
                     bufferFill = 0;
@@ -121,13 +121,51 @@ namespace Glacierizer
                 Thread.Sleep(1000);
             }
 
+            return FinalizeUpload(uploadId);
+        }
+
+        private bool FinalizeUpload(string uploadId)
+        {
             string fullChecksum = Amazon.Glacier.TreeHashGenerator.CalculateTreeHash(hashList);
 
-            _archiveId = _glacierAPI.EndMultiPartUpload(totalBytesProcessed, fullChecksum, uploadId);
-            if (_archiveId.Length == 0)
-                return false;
-            else
-                return true;
+            int numRetries = 0;
+            while (numRetries++ < 3)
+            {
+                try
+                {
+                    _archiveId = glacierAPI.EndMultiPartUpload(totalBytesProcessed, fullChecksum, uploadId);
+
+                    if (_archiveId.Length == 0)
+                        return false;
+                    else
+                        return true;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e.Message);
+                }
+            }
+
+            Console.WriteLine("Upload failed in final stage.");
+            Console.WriteLine("Upload Id: " + uploadId);
+            return false;
+        }
+
+        private void PrepareAndStartThreadForUpload(string uploadId, ref byte[] buffer, long currentStart, long currentEnd)
+        {
+            int availableThreadIndex = WaitForThreadsInPool(ref threads);
+
+            threads[availableThreadIndex].CopyData(ref buffer, bufferFill);
+
+            string checksum = "";
+            using (MemoryStream ms = new MemoryStream(threads[availableThreadIndex].data))
+            {
+                checksum = Amazon.Glacier.TreeHashGenerator.CalculateTreeHash(ms);
+                hashList.Add(checksum);
+            }
+
+            threads[availableThreadIndex].SetWorker(new UploaderWorker(ref glacierAPI, ref transferMetric, ref threads[availableThreadIndex].data, checksum, currentStart, currentEnd, uploadId));
+            threads[availableThreadIndex].Start();
         }
 
         private int WaitForThreadsInPool(ref List<ThreadInfo> threads)
@@ -140,8 +178,8 @@ namespace Glacierizer
                         return i;
                 }
                 long speed = transferMetric.speed();
-                long partDuration = 1000 * (partSize / speed);
-                long sleep = Math.Max(Math.Min(partDuration / threads.Count, 60000), 500);
+                long partDuration = speed != 0 ? (1000 * (partSize / speed)) : 0;
+                long sleep = Math.Max(Math.Min(2 * partDuration / threads.Count, 60000), 500);
                 Console.WriteLine("Main Thread Waiting for Uploader Threads to finish. Sleeping for " + sleep + "ms");
                 Thread.Sleep((int)sleep);
             }

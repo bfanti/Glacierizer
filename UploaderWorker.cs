@@ -13,56 +13,11 @@ using System.Diagnostics;
 
 namespace Glacierizer
 {
-    class ThreadInfo
-    {
-        private Thread thread = null;
-        private UploaderWorker worker = null;
-        public byte[] data = null;
-
-        public ThreadInfo(int partSize)
-        {
-            data = new byte[partSize];
-        }
-
-        public void SetWorker(UploaderWorker w)
-        {
-            worker = w;
-            thread = null;
-            thread = new Thread(new ThreadStart(w.Run));
-        }
-
-        public void CopyData(ref byte[] newData, int size)
-        {
-            if (size > data.Length)
-                throw new Exception("Seriously?");
-
-            if (size < data.Length)
-                data = new byte[size];
-
-            for (int i = 0; i < size; ++i)
-                data[i] = newData[i];
-        }
-
-        public bool IsAlive()
-        {
-            if (thread != null)
-                return thread.IsAlive;
-            else
-                return false;
-        }
-
-        public void Start()
-        {
-            if (thread != null)
-                thread.Start();
-        }
-    }
-
     class UploaderWorker
     {
         private static short NUM_RETRIES = 3;
 
-        private PWGlacierAPI api;
+        private GlacierAPIInterface api;
         private TransferMetric metric;
 
         private byte[] data;
@@ -74,7 +29,7 @@ namespace Glacierizer
         
         private long lastBytesCount;
 
-        public UploaderWorker(ref PWGlacierAPI api, ref TransferMetric metric, ref byte[] data, ref List<string> hashList, long start, long end, string uploadId)
+        public UploaderWorker(ref GlacierAPIInterface api, ref TransferMetric metric, ref byte[] data, string checksum, long start, long end, string uploadId)
         {
             this.api = api;
             this.metric = metric;
@@ -83,14 +38,7 @@ namespace Glacierizer
             this.uploadId = uploadId;
             this.lastBytesCount = 0;
             this.data = data;
-
-            // MemoryStream inherits from IDisposable, use 'using' statement to make sure it gets disposed.
-            using (MemoryStream ms = new MemoryStream(data))
-            {
-                checksum = Amazon.Glacier.TreeHashGenerator.CalculateTreeHash(ms);
-            }
-
-            hashList.Add(checksum);
+            this.checksum = checksum;
         }
 
         private void OnTransferProgress(Object sender, EventArgs e)
